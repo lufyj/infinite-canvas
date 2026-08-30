@@ -29,11 +29,10 @@ http://localhost:3000
 
 ## Docker 启动
 
-如果你需要基于当前源码构建镜像：
+在仓库根目录基于当前源码构建并启动：
 
 ```bash
-docker build -t infinite-canvas .
-docker run --rm -p 3000:3000 infinite-canvas
+docker compose up -d --build
 ```
 
 ## 首次使用建议

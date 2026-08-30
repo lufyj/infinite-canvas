@@ -2,6 +2,9 @@
 
 ## Unreleased
 
++ [调整] 默认 Docker Compose 改为基于当前本地代码构建并启动主应用镜像。
++ [修复] Docker 镜像构建时统一启动脚本行尾，避免 Windows 本地构建的容器反复重启。
+
 ## v0.16.0 - 2026-08-18
 
 + [新增] 提示词来源新增 Freestylefly GPT Image 2 内置来源。
