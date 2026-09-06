@@ -1,11 +1,12 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useState } from "react";
 import { Cpu } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import i18n from "@/i18n";
-import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger } from "@/components/ui/select";
+import { FMGO_MODEL_GROUPS } from "@/lib/fmgo-models";
 import { cn } from "@/lib/utils";
-import { modelOptionLabel, modelOptionName, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { isModelAvailable, modelOptionLabel, modelOptionName, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
 type ModelPickerProps = {
     config: AiConfig;
@@ -23,8 +24,11 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
     const pickerId = useId();
     const [open, setOpen] = useState(false);
     const options = useMemo(() => Array.from(new Set([...(config.channelMode === "local" && !capability ? [value] : []), ...selectableModelsByCapability(config, capability)].filter((model): model is string => Boolean(model)))), [capability, config, value]);
+    const { groups, ungrouped } = useMemo(() => groupModelOptions(options), [options]);
     const current = value || "";
     const pickerPlaceholder = placeholder || t("settingsPanels.model.select");
+    const currentLabel = current ? modelOptionLabel(config, current) : pickerPlaceholder;
+    const currentAvailable = !current || isModelAvailable(config, current);
 
     useEffect(() => {
         const closeOtherPicker = (event: Event) => {
@@ -54,10 +58,10 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 )}
                 onMouseDown={(event) => event.stopPropagation()}
                 onPointerDown={(event) => event.stopPropagation()}
-                title={current ? modelOptionLabel(config, current) : pickerPlaceholder}
+                title={currentAvailable ? currentLabel : t("settingsPanels.model.unavailable", { model: currentLabel })}
             >
                 <ModelIcon model={current} />
-                <span className="canvas-model-picker-text min-w-0 flex-1 truncate text-left">{current ? modelOptionLabel(config, current) : pickerPlaceholder}</span>
+                <span className="canvas-model-picker-text min-w-0 flex-1 truncate text-left">{currentAvailable ? currentLabel : t("settingsPanels.model.unavailable", { model: currentLabel })}</span>
             </SelectTrigger>
             <SelectContent
                 data-canvas-no-zoom
@@ -70,11 +74,23 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 onMouseDown={(event) => event.stopPropagation()}
             >
                 {options.length ? (
-                    options.map((model) => (
-                        <SelectItem key={model} value={model} textValue={modelOptionLabel(config, model)}>
-                            <ModelLabel config={config} model={model} />
-                        </SelectItem>
-                    ))
+                    <>
+                        {groups.map((group, index) => (
+                            <Fragment key={group.key}>
+                                {index ? <SelectSeparator /> : null}
+                                <SelectGroup>
+                                    <SelectLabel className="px-1.5 py-1.5 font-medium">{t(`settingsPanels.model.groups.${group.key}`)}</SelectLabel>
+                                    {group.options.map((model) => <ModelOption key={model} config={config} model={model} />)}
+                                </SelectGroup>
+                            </Fragment>
+                        ))}
+                        {ungrouped.length ? (
+                            <>
+                                {groups.length ? <SelectSeparator /> : null}
+                                {ungrouped.map((model) => <ModelOption key={model} config={config} model={model} />)}
+                            </>
+                        ) : null}
+                    </>
                 ) : (
                     <SelectItem value="__empty__" disabled>
                         {emptyModelLabel(config, capability)}
@@ -82,6 +98,38 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 )}
             </SelectContent>
         </Select>
+    );
+}
+
+function groupModelOptions(options: string[]) {
+    const byName = new Map(options.map((option) => [modelOptionName(option), option]));
+    const groups: Array<{ key: string; options: string[] }> = FMGO_MODEL_GROUPS.map((group) => ({ key: group.key, options: group.models.map((model) => byName.get(model)).filter((model): model is string => Boolean(model)) })).filter((group) => group.options.length);
+    const grouped = new Set(groups.flatMap((group) => group.options));
+    const providerGroups = [
+        { key: "openai", pattern: /gpt|chatgpt|codex|(^|[-_.])o[134]($|[-_.])/i },
+        { key: "anthropic", pattern: /claude|anthropic/i },
+        { key: "google", pattern: /gemini|google/i },
+        { key: "deepseek", pattern: /deepseek/i },
+        { key: "glm", pattern: /glm|zhipu/i },
+        { key: "grokText", pattern: /grok|xai/i },
+        { key: "qwen", pattern: /qwen|通义/i },
+    ];
+    providerGroups.forEach((group) => {
+        const matched = options.filter((option) => !grouped.has(option) && group.pattern.test(modelOptionName(option)));
+        if (!matched.length) return;
+        groups.push({ key: group.key, options: matched });
+        matched.forEach((option) => grouped.add(option));
+    });
+    const ungrouped = options.filter((option) => !grouped.has(option));
+    if (ungrouped.length) groups.push({ key: "other", options: ungrouped });
+    return { groups, ungrouped: [] as string[] };
+}
+
+function ModelOption({ config, model }: { config: AiConfig; model: string }) {
+    return (
+        <SelectItem value={model} textValue={modelOptionLabel(config, model)}>
+            <ModelLabel config={config} model={model} />
+        </SelectItem>
     );
 }
 

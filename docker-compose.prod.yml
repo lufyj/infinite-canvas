@@ -1,0 +1,10 @@
+services:
+  app:
+    image: "${INFINITE_CANVAS_IMAGE:?Set INFINITE_CANVAS_IMAGE in .env}"
+    container_name: infinite-canvas
+    ports:
+      - "${INFINITE_CANVAS_BIND_ADDRESS:-127.0.0.1}:${INFINITE_CANVAS_PORT:-3000}:3000"
+    restart: unless-stopped
+    environment:
+      ANALYTICS_GA4_ID: ${ANALYTICS_GA4_ID:-}
+      ANALYTICS_BAIDU_ID: ${ANALYTICS_BAIDU_ID:-}

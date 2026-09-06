@@ -1,90 +1,251 @@
 ---
-title: Docker 部署
-description: 使用 Docker Compose 部署无限画布
+title: 自行发布 Docker 镜像并部署
+description: 从 GitHub 仓库构建自己的 GHCR 镜像，再部署到低配置服务器
 ---
 
-# Docker 部署
+# 自行发布 Docker 镜像并部署
 
-如果你希望在自己的机器或服务器上运行项目，可以直接使用 Docker Compose。
+本流程不会使用上游作者的镜像。GitHub Actions 负责构建并发布你自己的镜像，生产服务器只执行 `pull` 和 `up`，不编译前端。
 
-## 基于本地代码启动
-
-```bash
-git clone git@github.com:basketikun/infinite-canvas.git
-cd infinite-canvas
-docker compose up -d --build
-```
-
-该命令会通过根目录 `Dockerfile` 打包当前本地代码，并启动构建出的 `infinite-canvas:local` 镜像。
-
-启动后访问：
+镜像地址由当前 GitHub 仓库自动决定：
 
 ```text
-http://localhost:3000
+ghcr.io/<仓库所有者>/<仓库名>:<版本标签>
 ```
 
-## 使用发布镜像
+例如仓库是 `https://github.com/your-name/infinite-canvas`，发布 `v0.16.1` 后，镜像就是：
 
-如果不需要构建本地代码，也可以直接运行发布镜像：
+```text
+ghcr.io/your-name/infinite-canvas:v0.16.1
+```
+
+## 一、准备自己的 GitHub 仓库
+
+先在 GitHub 创建仓库，或 Fork 本项目，然后把需要部署的代码推送到你自己的仓库。确认本地 `origin` 指向你的仓库：
 
 ```bash
-docker run -d --name infinite-canvas -p 3000:3000 ghcr.io/basketikun/infinite-canvas:latest
+git remote -v
 ```
 
-## 文档站镜像
+Fork 的 Actions 默认可能处于关闭状态。打开仓库的 **Actions** 页面并启用工作流。
 
-文档站位于 `docs/` 目录，按带服务端能力的 Next.js standalone 应用单独构建，不打进主应用镜像。
+仓库已包含 `.github/workflows/docker-image.yml`。工作流使用 GitHub 自动提供的 `GITHUB_TOKEN` 登录 GHCR，不需要额外保存 Docker 密码，并会分别构建 `linux/amd64`、`linux/arm64`，最后合并为一个多架构镜像。
 
-使用发布镜像：
+如果仓库或组织限制了工作流权限，在 **Settings > Actions > General > Workflow permissions** 中允许工作流写入包。工作流自身已经声明 `packages: write`。
+
+## 二、发布第一个镜像
+
+先确保需要部署的修改已经提交并推送。再创建一个新的 `v*` 标签，例如：
+
+```bash
+git push origin HEAD
+git tag v0.16.1
+git push origin v0.16.1
+```
+
+不要重复使用已经发布过的版本标签。正式发版时还应按照项目流程同步更新根目录 `VERSION` 和 `CHANGELOG.md`。
+
+推送标签后，打开仓库的 **Actions > Docker image**。等待 `meta`、两个架构的 `build` 和最终 `merge` 全部成功。成功后会生成：
+
+- `ghcr.io/<仓库所有者>/<仓库名>:v0.16.1`
+- 同一提交对应的短 SHA 标签
+
+工作流不会生成 `latest`，生产环境应使用明确的版本标签，方便回滚。
+
+## 三、设置镜像可见性
+
+GHCR 新包通常是私有包。在 GitHub 仓库或个人主页进入 **Packages**，打开刚生成的容器包：
+
+- 想让服务器免登录拉取：在包设置中把可见性改为 **Public**。
+- 想保持私有：服务器需要用 GitHub Personal Access Token 登录，Token 至少要有 `read:packages` 权限。
+
+私有镜像登录示例：
+
+```bash
+export GHCR_TOKEN='你的只读 Token'
+echo "$GHCR_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+unset GHCR_TOKEN
+```
+
+不要把 Token 写进仓库、Compose 或 `.env`。
+
+## 四、准备生产服务器
+
+服务器需要能够运行 Linux 容器的 Docker Engine、Docker Compose v2，并能访问 `ghcr.io`。确认：
+
+```bash
+docker version
+docker compose version
+```
+
+把你自己的仓库克隆到服务器：
+
+```bash
+git clone https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPOSITORY.git
+cd YOUR_REPOSITORY
+```
+
+服务器只需要仓库中的 `docker-compose.prod.yml`，不会使用源码进行构建。
+
+## 五、填写生产配置
+
+在服务器仓库根目录创建 `.env`：
+
+```dotenv
+INFINITE_CANVAS_IMAGE=ghcr.io/your-github-username/your-repository:v0.16.1
+INFINITE_CANVAS_BIND_ADDRESS=127.0.0.1
+INFINITE_CANVAS_PORT=3000
+
+# 可选；不填写时不会加载统计脚本
+# ANALYTICS_GA4_ID=G-XXXXXXXXXX
+# ANALYTICS_BAIDU_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+把仓库所有者、仓库名和版本替换成你的实际值。GHCR 镜像地址应使用小写字母。
+
+`docker-compose.prod.yml` 没有默认镜像地址；遗漏 `INFINITE_CANVAS_IMAGE` 时会直接报错，避免误拉取他人的镜像。
+
+## 六、启动服务
+
+```bash
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d --no-build
+```
+
+检查容器和页面：
+
+```bash
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs --tail=100 app
+curl -I http://127.0.0.1:3000
+```
+
+这里不会执行 `docker build`。服务器只下载 Actions 已经构建好的镜像，并运行其中的 Nginx 静态站点。
+
+## 七、配置域名和 HTTPS
+
+生产 Compose 默认只绑定 `127.0.0.1:3000`。推荐由宿主机 Nginx、Caddy 或其他网关负责公网域名和证书。
+
+Nginx 示例：
+
+```nginx
+server {
+    listen 80;
+    server_name canvas.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+再使用你的证书管理方案开启 HTTPS。网页使用 HTTPS 时，FMGO API 和 WebDAV 地址也应使用 HTTPS，否则浏览器会按混合内容拦截请求。
+
+如果不使用反向代理、确实要直接开放端口，把 `.env` 改为：
+
+```dotenv
+INFINITE_CANVAS_BIND_ADDRESS=0.0.0.0
+INFINITE_CANVAS_PORT=3000
+```
+
+重新执行 `up`，并在防火墙或云安全组中放行该端口。
+
+## 八、发布和部署新版本
+
+在开发机提交新代码并发布新标签：
+
+```bash
+git push origin HEAD
+git tag v0.16.2
+git push origin v0.16.2
+```
+
+等待 Actions 构建完成后，在服务器把 `.env` 的镜像标签改为 `v0.16.2`，然后执行：
+
+```bash
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d --no-build
+docker compose -f docker-compose.prod.yml ps
+```
+
+## 九、回滚
+
+把 `.env` 中的镜像标签改回上一个版本，再执行：
+
+```bash
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d --no-build
+```
+
+## 十、停止服务
+
+```bash
+docker compose -f docker-compose.prod.yml down
+```
+
+再次启动：
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --no-build
+```
+
+## 数据和安全说明
+
+- 主应用是 Vite 静态前端，容器中没有项目业务后端。
+- 画布、素材和生成记录主要保存在访问者浏览器的 IndexedDB，主应用容器不需要数据卷。
+- API Key 保存在浏览器本地，由浏览器直接请求 FMGO API；不要把 API Key 放进服务器 Compose。
+- FMGO API 和 WebDAV 必须允许网站域名的 CORS 请求。
+- 替换或删除容器不会删除浏览器数据；跨设备同步需要用户自行配置 WebDAV。
+- `canvas-agent` 应运行在访问者自己的电脑，不应作为网页后端部署到远端服务器。
+
+## 常见问题
+
+### Actions 推送镜像时显示 `denied`
+
+确认工作流的 `packages: write` 没有被组织策略禁止，并确认 Actions 正在你自己的仓库中运行。工作流会自动使用当前仓库地址，不应再出现上游作者的 GHCR 命名空间。
+
+### 服务器显示 `unauthorized`
+
+镜像仍是私有包。把包设为 Public，或者使用带 `read:packages` 权限的 Token 执行 `docker login ghcr.io`。
+
+### 服务器显示 `manifest unknown`
+
+镜像标签尚未构建成功，或 `.env` 中的仓库名、大小写、版本标签不正确。先在 GitHub Packages 页面确认完整镜像地址。
+
+### 服务器仍然开始构建
+
+确认使用生产文件和 `--no-build`：
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --no-build
+```
+
+根目录 `docker-compose.yml` 含有 `build:`，只用于本地源码构建。
+
+### 页面能打开，但接口请求失败
+
+在浏览器开发者工具中检查 Network 和 Console。通常是 FMGO API 不可达、HTTPS 页面请求了 HTTP 接口，或接口没有允许当前网站域名的 CORS 请求。
+
+## 可选：部署自己的文档站镜像
+
+同一版本标签还会触发 `docs-docker-image.yml`，发布：
+
+```text
+ghcr.io/<仓库所有者>/<仓库名>-docs:latest
+ghcr.io/<仓库所有者>/<仓库名>-docs:<版本标签>
+```
+
+在 `docs/.env` 中填写自己的文档镜像后即可启动：
+
+```dotenv
+INFINITE_CANVAS_DOCS_IMAGE=ghcr.io/your-github-username/your-repository-docs:v0.16.1
+```
 
 ```bash
 cd docs
-docker compose up -d
+docker compose pull
+docker compose up -d --no-build
 ```
-
-基于当前源码本地构建：
-
-```bash
-cd docs
-docker compose -f docker-compose.local.yml up -d --build
-```
-
-## 数据说明
-
-当前主应用镜像只启动 Next.js。画布、我的素材、生成记录和 AI API Key 默认保存在浏览器本地；第三方提示词由浏览器前端直连拉取，不需要额外挂载数据目录。
-
-## 统计分析（可选）
-
-项目**默认不接入任何统计**：不设置下列环境变量时，页面不会加载任何统计脚本，也不会发送任何外部请求。你在自己的部署上想查看流量时，设置对应环境变量即可，无需修改代码或重新构建镜像——镜像启动时会据此生成运行期配置。
-
-统计按「每家一个独立变量」配置：**填了谁就启用谁，可同时启用多家**（例如 GA4 + 百度一起开）。仅支持 GA4 与百度，两者都只接受 ID，脚本地址由代码固定拼接，不接受任意脚本地址或内联 JS。
-
-| 变量 | 说明 |
-| --- | --- |
-| `ANALYTICS_GA4_ID` | Google Analytics 4 衡量 ID（`G-XXXX`） |
-| `ANALYTICS_BAIDU_ID` | 百度统计站点 ID（`hm.js?` 后面那串 hash） |
-
-在 `docker-compose.yml` 的 `environment` 中配置（文件内已附注释示例），下例同时启用 GA4 与百度：
-
-```yaml
-services:
-  app:
-    environment:
-      ANALYTICS_GA4_ID: G-XXXXXXXXXX
-      ANALYTICS_BAIDU_ID: e8263761cc5c32f5f7a855b8203b965a
-```
-
-或使用 `docker run`：
-
-```bash
-docker run -d -p 3000:3000 \
-  -e ANALYTICS_GA4_ID=G-XXXXXXXXXX \
-  -e ANALYTICS_BAIDU_ID=e8263761cc5c32f5f7a855b8203b965a \
-  ghcr.io/basketikun/infinite-canvas:latest
-```
-
-单页应用的路由切换会自动向所有已启用的统计上报 pageview。
-
-<Callout type="warn">
-请只在你自己的站点上配置统计 ID，不要把 ID 提交进仓库；fork 或自托管本项目的用户默认不会产生任何统计。
-</Callout>

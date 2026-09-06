@@ -1,11 +1,11 @@
 import { useMemo } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
+import { fmgoLogicalModelName, fmgoModelCapability, fmgoRequestModelIds } from "@/lib/fmgo-models";
 
-export type ApiCallFormat = "openai" | "gemini";
+export type ApiCallFormat = "openai" | "gemini" | "fmgo";
 export type ModelCapability = "image" | "video" | "text" | "audio";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 
@@ -13,6 +13,8 @@ export type ChannelModel = {
     name: string;
     capability: ModelCapability;
     script?: string;
+    available?: boolean;
+    requestModels?: string[];
 };
 
 export type ModelChannel = {
@@ -22,6 +24,7 @@ export type ModelChannel = {
     apiKey: string;
     apiFormat: ApiCallFormat;
     models: ChannelModel[];
+    catalogUpdatedAt?: string;
 };
 
 export type AiConfig = {
@@ -64,46 +67,43 @@ export type ConfigTabKey = "channels" | "preferences" | "prompt-sources" | "webd
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
 const CHANNEL_MODEL_SEPARATOR = "::";
-const OPENAI_BASE_URL = "https://api.openai.com";
-const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
+const FMGO_BASE_URL = "https://api.fmgo.top";
+const VIDEO_KEYWORDS = ["video", "sora", "veo", "kling", "wan", "hailuo", "feimiao"];
+const AUDIO_KEYWORDS = ["audio", "tts", "speech", "voice", "music", "sound"];
+const IMAGE_KEYWORDS = ["seedream", "gpt-image", "image", "dall-e", "dalle", "imagen", "flux", "sdxl", "stable-diffusion", "midjourney"];
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
-    baseUrl: OPENAI_BASE_URL,
+    baseUrl: FMGO_BASE_URL,
     apiKey: "",
-    apiFormat: "openai",
+    apiFormat: "fmgo",
     channels: [
         {
             id: "default",
             name: i18n.t("config.channels.defaultName"),
-            baseUrl: OPENAI_BASE_URL,
+            baseUrl: FMGO_BASE_URL,
             apiKey: "",
-            apiFormat: "openai",
-            models: [
-                { name: "gpt-image-2", capability: "image" },
-                { name: "grok-imagine-video", capability: "video" },
-                { name: "gpt-5.5", capability: "text" },
-                { name: "gpt-4o-mini-tts", capability: "audio" },
-            ],
+            apiFormat: "fmgo",
+            models: [],
         },
     ],
-    model: "default::gpt-image-2",
-    imageModel: "default::gpt-image-2",
-    videoModel: "default::grok-imagine-video",
-    textModel: "default::gpt-5.5",
-    audioModel: "default::gpt-4o-mini-tts",
+    model: "",
+    imageModel: "",
+    videoModel: "",
+    textModel: "",
+    audioModel: "",
     audioVoice: "alloy",
     audioFormat: "mp3",
     audioSpeed: "1",
     audioInstructions: "",
-    videoSeconds: "6",
+    videoSeconds: "10",
     vquality: "720",
     videoGenerateAudio: "true",
     videoWatermark: "false",
     systemPrompt: "",
     reasoningEffort: "auto",
-    models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
-    quality: "auto",
+    models: [],
+    quality: "1K",
     size: "1:1",
     background: "",
     count: "1",
@@ -121,6 +121,8 @@ export const defaultWebdavSyncConfig: WebdavSyncConfig = {
 type ConfigStore = {
     config: AiConfig;
     webdav: WebdavSyncConfig;
+    modelCatalogStatus: "idle" | "loading" | "success" | "error";
+    modelCatalogError: string;
     isConfigOpen: boolean;
     configTab: ConfigTabKey;
     shouldPromptContinue: boolean;
@@ -130,18 +132,19 @@ type ConfigStore = {
     openConfigDialog: (shouldPromptContinue?: boolean, tab?: ConfigTabKey) => void;
     setConfigDialogOpen: (isOpen: boolean) => void;
     clearPromptContinue: () => void;
+    startModelCatalogRefresh: () => void;
+    applyModelCatalog: (models: string[]) => void;
+    failModelCatalogRefresh: (error: string) => void;
 };
-
-const VIDEO_KEYWORDS = ["video", "sora", "veo", "kling", "wan", "hailuo"];
 
 export function boolConfig(value: string, fallback: boolean) {
     return value ? value === "true" : fallback;
 }
-const AUDIO_KEYWORDS = ["audio", "tts", "speech", "voice", "music", "sound"];
-const IMAGE_KEYWORDS = ["seedream", "gpt-image", "image", "dall-e", "dalle", "imagen", "flux", "sdxl", "stable-diffusion", "midjourney"];
 
-/** Best-effort default capability for a freshly fetched model name; user can override in the channel editor. */
+/** Resolve the fixed capability of a documented FMGO model. */
 export function guessCapability(name: string): ModelCapability {
+    const fmgoCapability = fmgoModelCapability(name);
+    if (fmgoCapability) return fmgoCapability;
     const value = name.toLowerCase();
     if (VIDEO_KEYWORDS.some((keyword) => value.includes(keyword))) return "video";
     if (AUDIO_KEYWORDS.some((keyword) => value.includes(keyword))) return "audio";
@@ -158,7 +161,20 @@ function findChannelModel(config: AiConfig, value: string): { channel: ModelChan
 }
 
 export function modelCapabilityOf(config: AiConfig, value: string): ModelCapability | undefined {
-    return findChannelModel(config, value)?.model.capability;
+    return findChannelModel(config, value)?.model.capability || fmgoModelCapability(modelOptionName(value));
+}
+
+export function isModelAvailable(config: AiConfig, value: string) {
+    return findChannelModel(config, value)?.model.available === true;
+}
+
+export function availableRequestModels(config: AiConfig, value: string) {
+    const model = findChannelModel(config, value)?.model;
+    return model?.available === true ? model.requestModels || [] : [];
+}
+
+export function assertModelAvailable(config: AiConfig, value: string) {
+    if (!isModelAvailable(config, value)) throw new Error(i18n.t("settingsPanels.model.unavailable", { model: modelOptionName(value) }));
 }
 
 export function modelMatchesCapability(config: AiConfig, value: string, capability?: ModelCapability) {
@@ -169,14 +185,18 @@ export function modelMatchesCapability(config: AiConfig, value: string, capabili
 export function resolveModelForCapability(config: AiConfig, currentModel: string | undefined, capability: ModelCapability) {
     const defaultModel = capability === "image" ? config.imageModel : capability === "video" ? config.videoModel : capability === "audio" ? config.audioModel : config.textModel;
     const fallbackModel = capability === "image" ? defaultConfig.imageModel : capability === "video" ? defaultConfig.videoModel : capability === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
-    if (currentModel && modelMatchesCapability(config, currentModel, capability)) return currentModel;
+    if (currentModel && (modelMatchesCapability(config, currentModel, capability) || !findChannelModel(config, currentModel))) return currentModel;
     if (defaultModel && modelMatchesCapability(config, defaultModel, capability)) return defaultModel;
     return fallbackModel;
 }
 
 export function selectableModelsByCapability(config: AiConfig, capability?: ModelCapability) {
     if (!capability) return config.models;
-    return config.channels.flatMap((channel) => channel.models.filter((model) => model.capability === capability).map((model) => encodeChannelModel(channel.id, model.name)));
+    return config.channels.flatMap((channel) => channel.models.filter((model) => model.available === true && model.capability === capability).map((model) => encodeChannelModel(channel.id, model.name)));
+}
+
+export function availableModelCount(channel: ModelChannel) {
+    return channel.models.filter((model) => model.available === true).length;
 }
 
 /** The user script (if any) attached to a model; empty string means use the system default call. */
@@ -186,24 +206,20 @@ export function resolveModelScript(config: AiConfig, value: string) {
 
 function isAiConfigReady(config: AiConfig, model: string) {
     const channel = resolveModelChannel(config, model);
-    return Boolean(model.trim() && channel.baseUrl.trim() && channel.apiKey.trim());
+    return Boolean(model.trim() && isModelAvailable(config, model) && channel.baseUrl.trim() && channel.apiKey.trim());
 }
 
 export const useConfigStore = create<ConfigStore>()(
     persist(
-        (set, get) => ({
+        (set) => ({
             config: defaultConfig,
             webdav: defaultWebdavSyncConfig,
+            modelCatalogStatus: "idle",
+            modelCatalogError: "",
             isConfigOpen: false,
             configTab: "channels",
             shouldPromptContinue: false,
-            updateConfig: (key, value) =>
-                set((state) => ({
-                    config: {
-                        ...state.config,
-                        [key]: value,
-                    },
-                })),
+            updateConfig: (key, value) => set((state) => ({ config: normalizeAiConfig({ ...state.config, [key]: value }) })),
             updateWebdavConfig: (key, value) =>
                 set((state) => ({
                     webdav: {
@@ -215,6 +231,22 @@ export const useConfigStore = create<ConfigStore>()(
             openConfigDialog: (shouldPromptContinue = false, configTab = "channels") => set({ isConfigOpen: true, shouldPromptContinue, configTab }),
             setConfigDialogOpen: (isConfigOpen) => set({ isConfigOpen }),
             clearPromptContinue: () => set({ shouldPromptContinue: false }),
+            startModelCatalogRefresh: () => set({ modelCatalogStatus: "loading", modelCatalogError: "" }),
+            applyModelCatalog: (models) =>
+                set((state) => {
+                    const currentChannel = state.config.channels[0] || createModelChannel({ baseUrl: state.config.baseUrl, apiKey: state.config.apiKey });
+                    const channel = createModelChannel({
+                        ...currentChannel,
+                        models: mergeFetchedModelCatalog(currentChannel.models, models),
+                        catalogUpdatedAt: new Date().toISOString(),
+                    });
+                    return {
+                        config: normalizeAiConfig({ ...state.config, channels: [channel] }),
+                        modelCatalogStatus: "success",
+                        modelCatalogError: "",
+                    };
+                }),
+            failModelCatalogRefresh: (modelCatalogError) => set({ modelCatalogStatus: "error", modelCatalogError }),
         }),
         {
             name: CONFIG_STORE_KEY,
@@ -223,34 +255,10 @@ export const useConfigStore = create<ConfigStore>()(
                 const persistedState = (persisted || {}) as Partial<ConfigStore>;
                 const persistedConfig = (persistedState.config || {}) as Partial<AiConfig>;
                 const persistedWebdav = (persistedState.webdav || {}) as Partial<WebdavSyncConfig>;
-                const config = { ...defaultConfig, ...persistedConfig };
-                if (!Array.isArray(persistedConfig.channels)) config.channels = [];
-                const channels = normalizeChannels(config);
-                const models = modelOptionsFromChannels(channels);
                 return {
                     ...current,
                     webdav: { ...defaultWebdavSyncConfig, ...persistedWebdav },
-                    config: {
-                        ...config,
-                        channelMode: "local",
-                        apiFormat: normalizeApiFormat(config.apiFormat),
-                        channels,
-                        models,
-                        imageModel: normalizeModelOptionValue(config.imageModel || config.model, channels),
-                        videoModel: normalizeModelOptionValue(config.videoModel, channels),
-                        textModel: normalizeModelOptionValue(config.textModel || config.model, channels),
-                        audioModel: normalizeModelOptionValue(config.audioModel || defaultConfig.audioModel, channels),
-                        audioVoice: config.audioVoice || defaultConfig.audioVoice,
-                        audioFormat: config.audioFormat || defaultConfig.audioFormat,
-                        audioSpeed: config.audioSpeed || defaultConfig.audioSpeed,
-                        audioInstructions: config.audioInstructions || "",
-                        reasoningEffort: config.reasoningEffort || "auto",
-                        videoSeconds: config.videoSeconds || "6",
-                        vquality: config.vquality || "720",
-                        videoGenerateAudio: config.videoGenerateAudio || "true",
-                        videoWatermark: config.videoWatermark || "false",
-                        canvasImageCount: config.canvasImageCount || "3",
-                    },
+                    config: normalizeAiConfig(persistedConfig),
                 };
             },
         },
@@ -272,20 +280,22 @@ export function normalizeChannelModels(models: Array<string | ChannelModel> | un
         seen.add(name);
         const capability = typeof item === "string" ? guessCapability(name) : item.capability || guessCapability(name);
         const script = typeof item === "string" ? undefined : item.script?.trim() || undefined;
-        result.push({ name, capability, script });
+        const available = typeof item !== "string" && item.available === true;
+        const requestModels = typeof item === "string" ? undefined : uniqueModelOptions(item.requestModels || []);
+        result.push({ name, capability, script, available, ...(requestModels?.length ? { requestModels } : {}) });
     }
     return result;
 }
 
 export function createModelChannel(channel?: Partial<ModelChannel>): ModelChannel {
-    const apiFormat = normalizeApiFormat(channel?.apiFormat);
     return {
-        id: channel?.id?.trim() || nanoid(),
-        name: channel?.name?.trim() || i18n.t("config.channels.newName"),
-        baseUrl: channel?.baseUrl?.trim() || defaultBaseUrlForApiFormat(apiFormat),
+        id: "default",
+        name: i18n.t("config.channels.defaultName"),
+        baseUrl: channel?.baseUrl?.trim() || FMGO_BASE_URL,
         apiKey: channel?.apiKey || "",
-        apiFormat,
+        apiFormat: "fmgo",
         models: normalizeChannelModels(channel?.models),
+        catalogUpdatedAt: channel?.catalogUpdatedAt || "",
     };
 }
 
@@ -311,11 +321,12 @@ export function modelOptionLabel(config: AiConfig, value: string) {
     const decoded = decodeChannelModel(value);
     if (!decoded) return value;
     const channel = config.channels.find((item) => item.id === decoded.channelId);
+    if (channel?.apiFormat === "fmgo") return decoded.model;
     return channel ? `${decoded.model}（${channel.name}）` : decoded.model;
 }
 
 export function modelOptionsFromChannels(channels: ModelChannel[]) {
-    return uniqueModelOptions(channels.flatMap((channel) => channel.models.map((model) => encodeChannelModel(channel.id, model.name))));
+    return uniqueModelOptions(channels.flatMap((channel) => channel.models.filter((model) => model.available === true).map((model) => encodeChannelModel(channel.id, model.name))));
 }
 
 export function normalizeModelOptionValue(value: string | undefined, channels: ModelChannel[]) {
@@ -324,10 +335,10 @@ export function normalizeModelOptionValue(value: string | undefined, channels: M
     const decoded = decodeChannelModel(model);
     if (decoded) {
         const channel = channels.find((item) => item.id === decoded.channelId);
-        return channel && channel.models.some((item) => item.name === decoded.model) ? model : "";
+        return channel && channel.models.some((item) => item.name === decoded.model && item.available === true) ? model : "";
     }
     const channel = channels.find((item) => item.models.some((entry) => entry.name === model)) || channels[0];
-    return channel && channel.models.some((item) => item.name === model) ? encodeChannelModel(channel.id, model) : model;
+    return channel && channel.models.some((item) => item.name === model && item.available === true) ? encodeChannelModel(channel.id, model) : "";
 }
 
 export function resolveModelChannel(config: AiConfig, value: string) {
@@ -348,38 +359,78 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
     };
 }
 
-function normalizeChannels(config: AiConfig) {
-    const persistedChannels = Array.isArray(config.channels) ? config.channels : [];
-    const channels = persistedChannels.map((channel, index) =>
-        createModelChannel({
-            ...channel,
-            id: channel.id || (index === 0 ? "default" : `channel-${index + 1}`),
-            name: channel.name || (index === 0 ? i18n.t("config.channels.defaultName") : i18n.t("config.channels.indexedName", { index: index + 1 })),
-            models: normalizeChannelModels(channel.models),
-        }),
-    );
-    if (!channels.length) {
-        channels.push(
-            createModelChannel({
-                id: "default",
-                name: i18n.t("config.channels.defaultName"),
-                baseUrl: config.baseUrl || defaultConfig.baseUrl,
-                apiKey: config.apiKey || "",
-                apiFormat: config.apiFormat || defaultConfig.apiFormat,
-                models: normalizeChannelModels([config.model, config.imageModel, config.videoModel, config.textModel, config.audioModel].map(modelOptionName)),
-            }),
-        );
-    }
-    return channels;
+export function normalizeAiConfig(value: Partial<AiConfig>): AiConfig {
+    const config = { ...defaultConfig, ...value };
+    const persistedChannels = Array.isArray(value.channels) ? value.channels : [];
+    const source = persistedChannels.find((channel) => channel.apiFormat === "fmgo") || persistedChannels[0];
+    const channel = createModelChannel({
+        baseUrl: source ? source.baseUrl : value.baseUrl || FMGO_BASE_URL,
+        apiKey: source ? source.apiKey : value.apiKey || "",
+        models: source?.models,
+        catalogUpdatedAt: source?.catalogUpdatedAt,
+    });
+    const channels = [channel];
+    const imageModel = normalizeFmgoModelOption(config.imageModel || config.model, channel, "image");
+    const videoModel = normalizeFmgoModelOption(config.videoModel, channel, "video");
+    const textModel = normalizeFmgoModelOption(config.textModel, channel, "text");
+    const audioModel = normalizeFmgoModelOption(config.audioModel, channel, "audio");
+    const model = imageModel;
+    return {
+        ...config,
+        channelMode: "local",
+        baseUrl: channel.baseUrl,
+        apiKey: channel.apiKey,
+        apiFormat: "fmgo",
+        channels,
+        models: modelOptionsFromChannels(channels),
+        model,
+        imageModel,
+        videoModel,
+        textModel,
+        audioModel,
+        audioVoice: config.audioVoice || defaultConfig.audioVoice,
+        audioFormat: config.audioFormat || defaultConfig.audioFormat,
+        audioSpeed: config.audioSpeed || defaultConfig.audioSpeed,
+        audioInstructions: config.audioInstructions || "",
+        reasoningEffort: config.reasoningEffort || "auto",
+        videoSeconds: config.videoSeconds || defaultConfig.videoSeconds,
+        vquality: config.vquality || "720",
+        videoGenerateAudio: config.videoGenerateAudio || "true",
+        videoWatermark: config.videoWatermark || "false",
+        canvasImageCount: config.canvasImageCount || "3",
+    };
 }
 
-export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
-    if (apiFormat === "gemini") return GEMINI_BASE_URL;
-    return OPENAI_BASE_URL;
+function normalizeFmgoModelOption(value: string | undefined, channel: ModelChannel, capability?: ModelCapability) {
+    const name = modelOptionName(value || "");
+    const selected = channel.models.find((model) => model.available === true && model.name === name && (!capability || model.capability === capability));
+    const fallback = channel.models.find((model) => model.available === true && (!capability || model.capability === capability));
+    const model = selected || fallback;
+    return model ? encodeChannelModel(channel.id, model.name) : "";
 }
 
-function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
-    return apiFormat === "gemini" ? apiFormat : "openai";
+function mergeFetchedModelCatalog(previousModels: ChannelModel[], fetchedModels: string[]) {
+    const previousByName = new Map(normalizeChannelModels(previousModels).map((model) => [model.name, model]));
+    const fetchedByLogicalName = new Map<string, string[]>();
+    uniqueModelOptions(fetchedModels).forEach((requestModel) => {
+        const name = fmgoLogicalModelName(requestModel);
+        const fixedCapability = fmgoModelCapability(name);
+        const isLogicalModel = name.toLowerCase() === requestModel.toLowerCase();
+        if (fixedCapability && !isLogicalModel && !fmgoRequestModelIds(name).some((candidate) => candidate.toLowerCase() === requestModel.toLowerCase())) return;
+        fetchedByLogicalName.set(name, [...(fetchedByLogicalName.get(name) || []), requestModel]);
+    });
+    const availableModels = Array.from(fetchedByLogicalName.entries()).flatMap(([name, requestModels]): ChannelModel[] => {
+        const previous = previousByName.get(name);
+        const fixedCapability = fmgoModelCapability(name);
+        const capability = fixedCapability || (previous?.capability === "audio" || previous?.capability === "text" ? previous.capability : guessCapability(name));
+        if (!fixedCapability && (capability === "image" || capability === "video")) return [];
+        const hasOnlyLogicalName = fixedCapability && requestModels.every((requestModel) => requestModel.toLowerCase() === name.toLowerCase());
+        const availableRequests = hasOnlyLogicalName ? fmgoRequestModelIds(name) : requestModels;
+        return [{ name, capability, script: previous?.script, available: true, requestModels: availableRequests }];
+    });
+    const availableNames = new Set(availableModels.map((model) => model.name));
+    const unavailableModels = Array.from(previousByName.values()).filter((model) => !availableNames.has(model.name)).map((model) => ({ ...model, available: false }));
+    return [...availableModels, ...unavailableModels];
 }
 
 function uniqueModelOptions(models: string[]) {

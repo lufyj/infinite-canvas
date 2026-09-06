@@ -5,8 +5,8 @@
 - [Quick Start](/docs/overview/quick-start)
 - [Features](/docs/overview/features)
 - [Deploy on Render](/docs/overview/render)
-- [Docker Deployment](/docs/overview/docker)
-- [Third-party GitHub Prompt Repositories](/docs/overview/third-party-prompt-repositories)
+- [Publish and Deploy Your Own Docker Image](/docs/overview/docker)
+- [Third-party Prompt Sources](/docs/overview/third-party-prompt-repositories)
 
 ## Canvas Guide
 

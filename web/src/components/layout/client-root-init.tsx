@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { createModelChannel, useConfigStore } from "@/stores/use-config-store";
 import { usePromptSourceScheduler } from "@/hooks/use-prompt-source-scheduler";
+import { refreshDefaultModelCatalog } from "@/services/api/model-catalog";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
     const { message } = App.useApp();
@@ -13,6 +14,8 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const config = useConfigStore((state) => state.config);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
+    const channelBaseUrl = config.channels[0]?.baseUrl || "";
+    const channelApiKey = config.channels[0]?.apiKey || "";
 
     usePromptSourceScheduler();
 
@@ -38,6 +41,8 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
                                 ...channel,
                                 ...(baseUrl ? { baseUrl } : {}),
                                 ...(apiKey ? { apiKey } : {}),
+                                models: channel.models.map((model) => ({ ...model, available: false })),
+                                catalogUpdatedAt: "",
                             }
                           : channel,
                   )
@@ -48,6 +53,11 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
         openConfigDialog(false);
         message.success(t("config.importedDirectConfig"));
     }, [config.channels, message, openConfigDialog, t, updateConfig]);
+
+    useEffect(() => {
+        if (!channelBaseUrl.trim() || !channelApiKey.trim()) return;
+        void refreshDefaultModelCatalog().catch(() => undefined);
+    }, [channelApiKey, channelBaseUrl]);
 
     return <>{children}</>;
 }

@@ -1,61 +1,169 @@
 ---
-title: Docker Deployment
-description: Deploy Infinite Canvas with Docker Compose
+title: Publish and Deploy Your Own Docker Image
+description: Build your own GHCR image in GitHub Actions and deploy it without compiling on the server
 ---
 
-# Docker Deployment
+# Publish and Deploy Your Own Docker Image
 
-## Build and run the local source
+This workflow does not use an upstream maintainer's image. GitHub Actions builds and publishes an image owned by your repository, while the production server only pulls and runs it.
 
-```bash
-git clone git@github.com:basketikun/infinite-canvas.git
-cd infinite-canvas
-docker compose up -d --build
+The image name is derived from the current GitHub repository:
+
+```text
+ghcr.io/<repository-owner>/<repository-name>:<version-tag>
 ```
 
-This command builds the current local source through the root `Dockerfile` and starts the resulting `infinite-canvas:local` image.
+For `your-name/infinite-canvas` tagged as `v0.16.1`, the image is `ghcr.io/your-name/infinite-canvas:v0.16.1`.
 
-Open `http://localhost:3000`.
+## Prepare your repository
 
-## Use the published image
+Create or fork a GitHub repository, push the code you want to deploy, and enable workflows on its **Actions** page. Confirm that the local `origin` points to your repository:
 
 ```bash
-docker run -d --name infinite-canvas -p 3000:3000 ghcr.io/basketikun/infinite-canvas:latest
+git remote -v
 ```
 
-## Documentation image
+The included `.github/workflows/docker-image.yml` signs in with the automatic `GITHUB_TOKEN`, builds `linux/amd64` and `linux/arm64`, and publishes to the current repository owner's GHCR namespace. No Docker password secret is required.
 
-The documentation in `docs/` is a separate Next.js standalone application with server capabilities.
+If repository or organization policy restricts workflow permissions, allow package writes under **Settings > Actions > General > Workflow permissions**. The workflow already declares `packages: write`.
+
+## Publish the first image
+
+Commit and push the deployable code, then create a new `v*` tag:
+
+```bash
+git push origin HEAD
+git tag v0.16.1
+git push origin v0.16.1
+```
+
+Do not reuse a published tag. A formal release should also update `VERSION` and `CHANGELOG.md` according to the project release process.
+
+Open **Actions > Docker image** and wait for `meta`, both architecture builds, and `merge` to succeed. The workflow publishes the version tag and a short commit SHA tag. It does not publish `latest`; use an explicit version for reliable rollback.
+
+## Configure package visibility
+
+New GHCR packages are commonly private. Open the container under GitHub **Packages** and either make it **Public**, or keep it private and log in on the server with a Personal Access Token that has `read:packages`:
+
+```bash
+export GHCR_TOKEN='your-read-only-token'
+echo "$GHCR_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+unset GHCR_TOKEN
+```
+
+Never commit this token or place it in Compose or `.env`.
+
+## Prepare the server
+
+Install Docker Engine and Docker Compose v2, then clone your repository:
+
+```bash
+docker version
+docker compose version
+git clone https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPOSITORY.git
+cd YOUR_REPOSITORY
+```
+
+Create `.env` in the repository root:
+
+```dotenv
+INFINITE_CANVAS_IMAGE=ghcr.io/your-github-username/your-repository:v0.16.1
+INFINITE_CANVAS_BIND_ADDRESS=127.0.0.1
+INFINITE_CANVAS_PORT=3000
+
+# Optional analytics
+# ANALYTICS_GA4_ID=G-XXXXXXXXXX
+# ANALYTICS_BAIDU_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+Use your actual lowercase owner, repository, and tag. `docker-compose.prod.yml` intentionally has no default image and fails if `INFINITE_CANVAS_IMAGE` is missing.
+
+## Start the application
+
+```bash
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d --no-build
+docker compose -f docker-compose.prod.yml ps
+curl -I http://127.0.0.1:3000
+```
+
+View recent logs with:
+
+```bash
+docker compose -f docker-compose.prod.yml logs --tail=100 app
+```
+
+The server never invokes `docker build`; it only downloads the image produced by Actions and runs its Nginx static site.
+
+## Domain and HTTPS
+
+The production container binds to `127.0.0.1:3000` by default. Put host Nginx, Caddy, or another gateway in front of it:
+
+```nginx
+server {
+    listen 80;
+    server_name canvas.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Enable HTTPS with your certificate manager. An HTTPS site should use HTTPS AI and WebDAV endpoints to avoid browser mixed-content blocking.
+
+For direct IP and port access, set `INFINITE_CANVAS_BIND_ADDRESS=0.0.0.0` in `.env`, rerun `up`, and allow the port through the host firewall or cloud security group.
+
+## Upgrade and rollback
+
+Publish a new tag from the development machine and wait for Actions. Change `INFINITE_CANVAS_IMAGE` on the server to the new tag, then run:
+
+```bash
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d --no-build
+docker compose -f docker-compose.prod.yml ps
+```
+
+To roll back, restore the previous image tag in `.env` and run the same `pull` and `up` commands.
+
+Stop the service with:
+
+```bash
+docker compose -f docker-compose.prod.yml down
+```
+
+## Data and security
+
+- The main application is a static Vite frontend with no project business backend in the container.
+- Canvases, assets, and generation history primarily live in browser IndexedDB; no application data volume is required.
+- API keys stay in the browser and are sent directly to the configured FMGO API. Do not put API keys in server Compose configuration.
+- The FMGO API and WebDAV endpoint must allow CORS requests from the site origin.
+- Replacing the container does not delete browser data. Cross-device synchronization requires user-configured WebDAV.
+- `canvas-agent` belongs on each visitor's own computer and should not be deployed as the remote website backend.
+
+## Troubleshooting
+
+- `denied` in Actions: allow package writes and confirm the workflow is running in your repository.
+- `unauthorized` on the server: make the package public or log in with a token containing `read:packages`.
+- `manifest unknown`: confirm the Actions run succeeded and the lowercase owner, repository, and version tag in `.env` exactly match GitHub Packages.
+- The server starts building: use `docker-compose.prod.yml` with `--no-build`; the root `docker-compose.yml` is only for local source builds.
+- The page loads but API calls fail: inspect browser Network and Console for endpoint reachability, HTTPS mixed content, or CORS errors.
+
+## Optional documentation image
+
+The same release tag also runs `docs-docker-image.yml` and publishes `ghcr.io/<repository-owner>/<repository-name>-docs:latest` plus the version tag. Set your image in `docs/.env`:
+
+```dotenv
+INFINITE_CANVAS_DOCS_IMAGE=ghcr.io/your-github-username/your-repository-docs:v0.16.1
+```
+
+Then deploy it without building on the server:
 
 ```bash
 cd docs
-docker compose up -d
+docker compose pull
+docker compose up -d --no-build
 ```
-
-To build it from the current source:
-
-```bash
-cd docs
-docker compose -f docker-compose.local.yml up -d --build
-```
-
-The main application container only runs Next.js. Canvases, My Assets, generation history, and API keys are stored in the browser by default, while prompt repositories are fetched directly by the frontend. No persistent data volume is required for this data.
-
-## Optional analytics
-
-No analytics are enabled by default. A deployment can enable GA4, Baidu Analytics, or both at runtime:
-
-| Variable | Description |
-| --- | --- |
-| `ANALYTICS_GA4_ID` | Google Analytics 4 measurement ID (`G-XXXX`) |
-| `ANALYTICS_BAIDU_ID` | Baidu site ID, the hash after `hm.js?` |
-
-```yaml
-services:
-  app:
-    environment:
-      ANALYTICS_GA4_ID: G-XXXXXXXXXX
-      ANALYTICS_BAIDU_ID: e8263761cc5c32f5f7a855b8203b965a
-```
-
-SPA route changes automatically report page views to enabled providers. Only configure analytics IDs on sites you control, and do not commit them to the repository.

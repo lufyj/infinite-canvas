@@ -1,24 +1,21 @@
-import { Button, Drawer, Input, Segmented, Select, Space } from "antd";
-import { ListPlus, Trash2 } from "lucide-react";
+import { App, Button, Drawer, Input, Segmented, Space } from "antd";
+import { RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { refreshDefaultModelCatalog } from "@/services/api/model-catalog";
+import { normalizeChannelModels, useConfigStore, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelScriptEditor } from "./model-script-editor";
-import { ModelSelectModal } from "./model-select-modal";
 
 type ScriptTarget = { name: string; capability: ModelCapability; value: string };
 
 export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: boolean; channel: ModelChannel | null; onSave: (channel: ModelChannel) => void; onClose: () => void }) {
+    const { message } = App.useApp();
     const { t } = useTranslation();
     const [draft, setDraft] = useState<ModelChannel | null>(channel);
-    const [selectOpen, setSelectOpen] = useState(false);
     const [scriptTarget, setScriptTarget] = useState<ScriptTarget | null>(null);
-    const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
-        { label: "OpenAI", value: "openai" },
-        { label: "Gemini", value: "gemini" },
-    ];
-    const capabilityOptions: Array<{ label: string; value: ModelCapability }> = ["image", "video", "text", "audio"].map((value) => ({ label: t(`config.channelEditor.capabilities.${value}`), value: value as ModelCapability }));
+    const catalogStatus = useConfigStore((state) => state.modelCatalogStatus);
+    const catalogError = useConfigStore((state) => state.modelCatalogError);
 
     useEffect(() => {
         if (open && channel) setDraft(channel);
@@ -26,26 +23,41 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
 
     if (!draft) return null;
 
-    const patch = (value: Partial<ModelChannel>) => setDraft((current) => (current ? { ...current, ...value } : current));
-    const setModels = (models: ChannelModel[]) => patch({ models });
-
-    const changeApiFormat = (apiFormat: ApiCallFormat) => {
-        const baseUrl = !draft.baseUrl.trim() || draft.baseUrl.trim() === defaultBaseUrlForApiFormat(draft.apiFormat) ? defaultBaseUrlForApiFormat(apiFormat) : draft.baseUrl;
-        patch({ apiFormat, baseUrl });
-    };
-
-    const applySelection = (names: string[]) => {
-        const map = new Map(draft.models.map((model) => [model.name, model]));
-        setModels(names.map((name) => map.get(name) || { name, capability: guessCapability(name) }));
-    };
+    const availableModels = draft.models.filter((model) => model.available === true);
+    const modelGroups = (["text", "image", "video", "audio"] as ModelCapability[])
+        .map((capability) => ({ capability, models: availableModels.filter((model) => model.capability === capability) }))
+        .filter((group) => group.models.length);
+    const capabilityOptions: Array<{ label: string; value: ModelCapability }> = ["text", "audio"].map((value) => ({ label: t(`config.channelEditor.capabilities.${value}`), value: value as ModelCapability }));
+    const setModels = (models: ChannelModel[]) => setDraft({ ...draft, models });
 
     const setCapability = (name: string, capability: ModelCapability) => setModels(draft.models.map((model) => (model.name === name ? { ...model, capability } : model)));
     const setScript = (name: string, script: string) => setModels(draft.models.map((model) => (model.name === name ? { ...model, script: script || undefined } : model)));
-    const removeModel = (name: string) => setModels(draft.models.filter((model) => model.name !== name));
+
+    const normalizedDraft = () => {
+        const credentialsChanged = draft.baseUrl.trim() !== channel?.baseUrl.trim() || draft.apiKey !== channel?.apiKey;
+        return {
+            ...draft,
+            id: "default",
+            name: t("config.channels.defaultName"),
+            apiFormat: "fmgo" as const,
+            models: normalizeChannelModels(draft.models).map((model) => credentialsChanged ? { ...model, available: false } : model),
+            catalogUpdatedAt: credentialsChanged ? "" : draft.catalogUpdatedAt,
+        };
+    };
 
     const save = () => {
-        onSave({ ...draft, name: draft.name.trim() || t("config.channels.unnamed"), models: normalizeChannelModels(draft.models) });
+        onSave(normalizedDraft());
         onClose();
+    };
+
+    const refreshModels = async () => {
+        onSave(normalizedDraft());
+        try {
+            const count = await refreshDefaultModelCatalog();
+            message.success(t("config.channelEditor.refreshed", { count }));
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : t("config.modelSelect.fetchFailed"));
+        }
     };
 
     return (
@@ -58,63 +70,57 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
             extra={
                 <Space>
                     <Button onClick={onClose}>{t("common.cancel")}</Button>
-                    <Button type="primary" onClick={save}>
-                        {t("common.save")}
-                    </Button>
+                    <Button type="primary" onClick={save}>{t("common.save")}</Button>
                 </Space>
             }
         >
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4">
                 <label className="block">
-                    <span className="mb-1 block text-sm font-medium">{t("config.channelEditor.name")}</span>
-                    <Input value={draft.name} onChange={(event) => patch({ name: event.target.value })} />
-                </label>
-                <label className="block">
-                    <span className="mb-1 block text-sm font-medium">{t("config.channelEditor.protocol")}</span>
-                    <Select className="w-full" value={draft.apiFormat} options={apiFormatOptions} onChange={changeApiFormat} />
-                </label>
-                <label className="block md:col-span-2">
                     <span className="mb-1 block text-sm font-medium">{t("config.channelEditor.baseUrl")}</span>
-                    <Input value={draft.baseUrl} onChange={(event) => patch({ baseUrl: event.target.value })} placeholder="https://api.example.com" />
+                    <Input value={draft.baseUrl} onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })} placeholder="https://api.fmgo.top" />
                 </label>
-                <label className="block md:col-span-2">
+                <label className="block">
                     <span className="mb-1 block text-sm font-medium">API Key</span>
-                    <Input.Password value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} placeholder="sk-..." />
+                    <Input.Password value={draft.apiKey} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })} placeholder="sk-..." />
                 </label>
-            </div>
-
-            <div className="mt-6 mb-3 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                    <div className="text-sm font-semibold">{t("config.channelEditor.models")}</div>
-                    <div className="mt-0.5 text-xs text-stone-500">{t("config.channelEditor.modelDescription", { count: draft.models.length })}</div>
+                <div className="text-xs text-stone-500 dark:text-stone-400">
+                    {t("config.channelEditor.modelDescription", { count: availableModels.length })}
                 </div>
-                <Button type="primary" icon={<ListPlus className="size-4" />} onClick={() => setSelectOpen(true)}>
-                    {t("config.channelEditor.selectModels")}
-                </Button>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-stone-500 dark:text-stone-400">
+                    <span>{draft.catalogUpdatedAt ? t("config.channelEditor.lastUpdated", { time: new Date(draft.catalogUpdatedAt).toLocaleString() }) : t("config.channelEditor.notSynced")}</span>
+                    <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={catalogStatus === "loading"} onClick={() => void refreshModels()}>
+                        {t("config.channelEditor.refreshModels")}
+                    </Button>
+                </div>
+                {catalogStatus === "error" && catalogError ? <div className="text-xs text-red-500">{t("config.channelEditor.catalogError", { error: catalogError })}</div> : null}
             </div>
 
-            <div className="space-y-2 rounded-lg border border-stone-200 p-2 dark:border-stone-800">
-                {draft.models.length ? (
-                    draft.models.map((model) => (
-                        <div key={model.name} className="flex flex-wrap items-center gap-3 rounded-md px-2 py-1.5 hover:bg-stone-50 dark:hover:bg-stone-900/40">
-                            <span className="min-w-0 flex-1 truncate text-sm" title={model.name}>
-                                {model.name}
-                            </span>
-                            <div className="flex shrink-0 items-center gap-2">
-                                <Segmented size="small" value={model.capability} options={capabilityOptions} onChange={(value) => setCapability(model.name, value as ModelCapability)} />
-                                <Button size="small" type={model.script ? "primary" : "default"} ghost={Boolean(model.script)} onClick={() => setScriptTarget({ name: model.name, capability: model.capability, value: model.script || "" })}>
-                                    {t(model.script ? "config.channelEditor.scriptReady" : "config.channelEditor.script")}
-                                </Button>
-                                <Button size="small" danger type="text" icon={<Trash2 className="size-3.5" />} onClick={() => removeModel(model.name)} />
+            <div className="mt-6 space-y-5">
+                {modelGroups.length ? (
+                    modelGroups.map((group) => (
+                        <section key={group.capability}>
+                            <div className="mb-2 text-sm font-semibold">{t(`config.channelEditor.capabilities.${group.capability}`)} <span className="font-normal text-stone-400">{group.models.length}</span></div>
+                            <div className="space-y-1 border-l border-stone-200 pl-3 dark:border-stone-800">
+                                {group.models.map((model) => (
+                                    <div key={model.name} className="flex flex-wrap items-center gap-3 py-1.5">
+                                        <span className="min-w-0 flex-1 truncate text-sm" title={model.name}>{model.name}</span>
+                                        {model.capability === "text" || model.capability === "audio" ? (
+                                            <div className="flex shrink-0 items-center gap-2">
+                                                <Segmented size="small" value={model.capability} options={capabilityOptions} onChange={(value) => setCapability(model.name, value as ModelCapability)} />
+                                                <Button size="small" type={model.script ? "primary" : "default"} ghost={Boolean(model.script)} onClick={() => setScriptTarget({ name: model.name, capability: model.capability, value: model.script || "" })}>
+                                                    {t(model.script ? "config.channelEditor.scriptReady" : "config.channelEditor.script")}
+                                                </Button>
+                                            </div>
+                                        ) : null}
+                                    </div>
+                                ))}
                             </div>
-                        </div>
+                        </section>
                     ))
                 ) : (
                     <div className="px-2 py-8 text-center text-sm text-stone-500">{t("config.channelEditor.empty")}</div>
                 )}
             </div>
-
-            <ModelSelectModal open={selectOpen} channel={draft} selectedNames={draft.models.map((model) => model.name)} onConfirm={applySelection} onClose={() => setSelectOpen(false)} />
 
             <ModelScriptEditor
                 open={Boolean(scriptTarget)}

@@ -3,12 +3,11 @@ import type { NavigateFunction } from "react-router-dom";
 import i18n from "@/i18n";
 import { fetchPrompts } from "@/services/api/prompts";
 import { uploadImage } from "@/services/image-storage";
-import { imageAspectOptions, imageQualityOptions } from "@/components/image-settings-panel";
-import { videoResolutionOptions, videoSecondOptions, videoSizeOptions } from "@/components/video-settings-panel";
 import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
+import { fmgoImageProfile, fmgoRatio, fmgoVideoSelection } from "@/lib/fmgo-models";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAssetStore } from "@/stores/use-asset-store";
-import { modelOptionLabel, modelOptionName, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
+import { availableRequestModels, modelOptionLabel, modelOptionName, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 
 // Execute site-level Agent tools in the browser, including canvas lists, workbench generation, prompt search, and asset operations.
@@ -147,12 +146,13 @@ function listCanvasProjects(input: SiteToolInput) {
 
 function getImageConfig() {
     const { config } = useConfigStore.getState();
-    const model = config.imageModel || config.model;
+    const model = config.imageModel;
+    const profile = fmgoImageProfile(model, config.quality, availableRequestModels(config, model));
     return {
-        current: { model, modelName: modelOptionName(model), quality: config.quality || "auto", size: config.size || "1:1", count: config.count || "1" },
+        current: { model, modelName: modelOptionName(model), quality: profile?.imageSize || config.quality, size: profile ? fmgoRatio(config.size, profile.ratios, profile.defaultRatio) : config.size, count: config.count || "1" },
         models: selectableModelsByCapability(config, "image").map((value) => ({ value, label: modelOptionLabel(config, value) })),
-        qualityOptions: imageQualityOptions,
-        sizeOptions: imageAspectOptions,
+        qualityOptions: (profile?.imageSizes || []).map((value) => ({ value, label: value })),
+        sizeOptions: (profile?.ratios || []).map((value) => ({ value, label: value })),
         countRange: { min: 1, max: 15 },
     };
 }
@@ -187,21 +187,22 @@ function runImageWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
 
 function getVideoConfig() {
     const { config } = useConfigStore.getState();
-    const model = config.videoModel || config.model;
+    const model = config.videoModel;
+    const selection = fmgoVideoSelection(model, config.vquality, config.videoSeconds, config.size, availableRequestModels(config, model));
     return {
         current: {
             model,
             modelName: modelOptionName(model),
-            size: config.size || "1280x720",
-            seconds: config.videoSeconds || "6",
-            resolution: config.vquality || "720",
+            size: selection?.ratio || config.size,
+            seconds: selection?.seconds || config.videoSeconds,
+            resolution: selection?.resolution || "",
             generateAudio: config.videoGenerateAudio !== "false",
             watermark: config.videoWatermark === "true",
         },
         models: selectableModelsByCapability(config, "video").map((value) => ({ value, label: modelOptionLabel(config, value) })),
-        sizeOptions: videoSizeOptions,
-        secondsOptions: videoSecondOptions,
-        resolutionOptions: videoResolutionOptions,
+        sizeOptions: (selection?.ratios || []).map((value) => ({ value, label: value })),
+        secondsOptions: (selection?.durations || []).map(String),
+        resolutionOptions: (selection?.resolutions || []).map((value) => ({ value, label: value })),
     };
 }
 

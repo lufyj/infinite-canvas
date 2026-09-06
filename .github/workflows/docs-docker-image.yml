@@ -10,19 +10,24 @@ permissions:
   packages: write
 
 env:
-  IMAGE_NAME: ghcr.io/basketikun/infinite-canvas-docs
+  REGISTRY: ghcr.io
 
 jobs:
   meta:
     runs-on: ubuntu-latest
     outputs:
+      image: ${{ steps.image.outputs.name }}
       tags: ${{ steps.meta.outputs.tags }}
       labels: ${{ steps.meta.outputs.labels }}
     steps:
+      - id: image
+        shell: bash
+        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY,,}-docs" >> "$GITHUB_OUTPUT"
+
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE_NAME }}
+          images: ${{ steps.image.outputs.name }}
           tags: |
             type=raw,value=latest
             type=ref,event=tag
@@ -48,7 +53,7 @@ jobs:
 
       - uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -59,7 +64,7 @@ jobs:
           file: ./docs/Dockerfile
           platforms: ${{ matrix.platform }}
           labels: ${{ needs.meta.outputs.labels }}
-          outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ needs.meta.outputs.image }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=docs-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=docs-${{ matrix.arch }}
 
@@ -87,7 +92,7 @@ jobs:
 
       - uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -100,6 +105,7 @@ jobs:
       - name: Create multi-arch manifest
         shell: bash
         env:
+          IMAGE_NAME: ${{ needs.meta.outputs.image }}
           TAGS: ${{ needs.meta.outputs.tags }}
         run: |
           tag_args=()

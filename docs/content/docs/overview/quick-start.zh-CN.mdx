@@ -29,11 +29,7 @@ http://localhost:3000
 
 ## Docker 启动
 
-在仓库根目录基于当前源码构建并启动：
-
-```bash
-docker compose up -d --build
-```
+生产服务器推荐先通过 GitHub Actions 发布到你自己的 GHCR，再使用生产 Compose 拉取运行。完整流程见 [自行发布 Docker 镜像并部署](/zh-CN/docs/overview/docker)。
 
 ## 首次使用建议
 
