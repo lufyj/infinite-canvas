@@ -89,10 +89,10 @@ function sleep(ms: number, signal?: AbortSignal) {
     });
 }
 
-function createPoll(signal?: AbortSignal) {
+function createPoll(signal?: AbortSignal, defaultTimeoutMs = 300000) {
     return async function poll<T, R>(request: () => Promise<T>, extract: (value: T) => R | null | undefined | false, options?: PluginPollOptions): Promise<R> {
         const intervalMs = options?.intervalMs ?? 2500;
-        const timeoutMs = options?.timeoutMs ?? 300000;
+        const timeoutMs = options?.timeoutMs ?? defaultTimeoutMs;
         const deadline = performance.now() + timeoutMs;
         for (;;) {
             if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
@@ -115,7 +115,7 @@ export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<
     const { config } = args;
     const http = createPluginHttp(config, { signal: args.signal });
     const request = createPluginRequest(config, { signal: args.signal });
-    const poll = createPoll(args.signal);
+    const poll = createPoll(args.signal, args.capability === "video" ? 60 * 60_000 : args.capability === "image" ? 30 * 60_000 : 300000);
     const runner = new Function(
         "prompt",
         "images",
@@ -260,7 +260,7 @@ const task = await request({
 return await poll(
   () => request({ method: "get", url: \`\${baseUrl}/v1/videos/\${task.id}\`, headers }),
   (state) => state.status === "completed" ? { url: state.video_url || state.url } : null,
-  { intervalMs: 2500, timeoutMs: 300000 },
+  { intervalMs: 2500, timeoutMs: 3600000 },
 );`,
         },
         {
@@ -285,7 +285,7 @@ return await poll(
     if (!uri) throw new Error(${JSON.stringify(i18n.t("modelPlugin.templates.geminiNoVideoUri"))});
     return { url: uri.includes("key=") ? uri : \`\${uri}\${uri.includes("?") ? "&" : "?"}key=\${apiKey}\` };
   },
-  { intervalMs: 5000, timeoutMs: 300000 },
+  { intervalMs: 5000, timeoutMs: 3600000 },
 );`,
         },
     ],

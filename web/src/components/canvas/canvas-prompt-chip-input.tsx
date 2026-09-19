@@ -151,6 +151,11 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
                     composingRef.current = false;
                     syncFromEditor();
                 }}
+                onPaste={(event) => {
+                    event.preventDefault();
+                    insertPlainTextAtCaret(event.currentTarget, event.clipboardData.getData("text/plain"));
+                    syncFromEditor();
+                }}
                 onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
                     event.stopPropagation();
                     if (isImeComposing(event)) return;
@@ -326,6 +331,23 @@ function removeActiveMention() {
     if (!match) return;
     range.setStart(range.startContainer, Math.max(0, range.startOffset - (match[1] || "").length - 1));
     range.deleteContents();
+}
+
+function insertPlainTextAtCaret(editor: HTMLElement, text: string) {
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    const textNode = document.createTextNode(text);
+    if (!range || !editor.contains(range.startContainer)) {
+        editor.append(textNode);
+        placeCaretAtEnd(editor);
+        return;
+    }
+    range.deleteContents();
+    range.insertNode(textNode);
+    range.setStartAfter(textNode);
+    range.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
 }
 
 // Chips are atomic contentEditable="false" blocks and are removed as a unit with adjacent Backspace/Delete presses.

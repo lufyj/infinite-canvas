@@ -19,6 +19,7 @@ const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiE
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
 export type VideoGenerationTask = { id: string; provider: "openai" | "plugin" | "fmgo"; model: string };
 export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
+export const VIDEO_GENERATION_TIMEOUT_MS = 60 * 60_000;
 
 /** Results for scripted (plugin) video models, which run their own create+poll in one shot at task creation. */
 const pluginVideoResults = new Map<string, VideoGenerationResult>();
@@ -36,13 +37,15 @@ function aiHeaders(config: AiConfig, contentType?: string) {
 
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: RequestOptions): Promise<VideoGenerationResult> {
     const task = await createVideoGenerationTask(config, prompt, references, options);
-    for (let attempt = 0; attempt < 120; attempt += 1) {
+    const deadline = Date.now() + VIDEO_GENERATION_TIMEOUT_MS;
+    while (Date.now() < deadline) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const state = await pollVideoGenerationTask(config, task, options);
         if (state.status === "completed") return state.result;
         if (state.status === "failed") throw new Error(state.error);
-        if (attempt === 119) throw new Error(apiText("videoTimeout", { provider: "" }));
-        await delay(2500, options?.signal);
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        await delay(Math.min(2500, remaining), options?.signal);
     }
     throw new Error(apiText("videoTimeout", { provider: "" }));
 }

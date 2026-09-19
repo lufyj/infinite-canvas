@@ -26,6 +26,9 @@ type FmgoVideoPayload = {
 
 export type FmgoVideoTask = VideoGenerationTask & { provider: "fmgo"; endpoint: "chat" | "videos"; statusUrl?: string; pollAfterMs?: number };
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
+const FMGO_RICH_MEDIA_MODELS = new Set(["feimiao-v2-431", "feimiao-v2-431-fast", "feimiao-v2.5", "k2.0-fast", "k2.5", "feimiao-v2-933", "feimiao-v2-903", "md2.0-933", "md2.0-900", "md2.5"]);
+const FMGO_VIDEO_MEDIA_MODELS = new Set([...FMGO_RICH_MEDIA_MODELS, "minimax-h3"]);
+const FMGO_MEDIA_MODELS = new Set(["feimiao-v2", "feimiao-v2-fast", ...FMGO_VIDEO_MEDIA_MODELS]);
 
 export async function createFmgoVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: { signal?: AbortSignal; referenceVideos?: Array<{ url?: string; storageKey?: string }>; referenceAudios?: Array<{ url?: string; storageKey?: string }> }): Promise<FmgoVideoTask> {
     if (!prompt.trim()) throw new Error(apiText("videoPromptRequired"));
@@ -38,14 +41,14 @@ export async function createFmgoVideoTask(config: AiConfig, model: string, promp
     const maxReferences = profile.maxReferences;
     const images = await Promise.all(references.slice(0, maxReferences).map(fmgoImageReference));
     if (profile.model === "grok-1.5" && !images.length) throw new Error("FMGO grok-1.5 仅支持首帧或单图参考生成");
-    const allowMediaDataUrl = profile.model === "feimiao-v2-431" || profile.model === "feimiao-v2.5";
+    const allowMediaDataUrl = FMGO_RICH_MEDIA_MODELS.has(profile.model);
     const videoUrls = (options?.referenceVideos || []).map((media) => mediaUrl(media, allowMediaDataUrl)).filter((url): url is string => Boolean(url));
     const audioUrls = (options?.referenceAudios || []).map((media) => mediaUrl(media, allowMediaDataUrl)).filter((url): url is string => Boolean(url));
     if ((options?.referenceVideos || []).some((media) => !mediaUrl(media, allowMediaDataUrl))) throw new Error(apiText("invalidReferenceVideo"));
     if ((options?.referenceAudios || []).some((media) => !mediaUrl(media, allowMediaDataUrl))) throw new Error(apiText("invalidReferenceAudio"));
-    if (["feimiao-v2-431", "feimiao-v2.5"].includes(profile.model) && audioUrls.length && !images.length && !videoUrls.length) throw new Error(apiText("invalidReferenceAudio"));
+    if (FMGO_RICH_MEDIA_MODELS.has(profile.model) && audioUrls.length && !images.length && !videoUrls.length) throw new Error(apiText("invalidReferenceAudio"));
     if (profile.endpoint === "chat" && images.length + videoUrls.length + audioUrls.length > maxReferences) throw new Error(`FMGO ${profile.model} supports at most ${maxReferences} references`);
-    if ((videoUrls.length || audioUrls.length) && !["feimiao-v2", "feimiao-v2-fast", "feimiao-v2-431", "feimiao-v2.5"].includes(profile.model)) throw new Error(`FMGO ${profile.model} does not support video or audio references`);
+    if ((videoUrls.length || audioUrls.length) && !FMGO_MEDIA_MODELS.has(profile.model)) throw new Error(`FMGO ${profile.model} does not support video or audio references`);
     const { resolution, seconds, ratio } = profile;
     const headers = { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json", Accept: "application/json", ...(endpoint === "chat" ? { Prefer: "respond-async" } : {}) };
     const body = endpoint === "chat"
@@ -113,10 +116,10 @@ function videoBody(model: string, requestModel: string, prompt: string, ratio: s
         ratio,
         resolution,
         seconds,
-        ...(["feimiao-v2-431", "feimiao-v2.5"].includes(model) ? { motion_has_audio: motionHasAudio } : {}),
+        ...(FMGO_RICH_MEDIA_MODELS.has(model) ? { motion_has_audio: motionHasAudio } : {}),
         ...(images.length ? { images: images.slice(0, maxReferences) } : {}),
-        ...(["feimiao-v2-431", "feimiao-v2.5"].includes(model) && videoUrls.length ? { reference_videos: videoUrls.slice(0, 3) } : {}),
-        ...(["feimiao-v2-431", "feimiao-v2.5"].includes(model) && audioUrls.length ? { reference_audios: audioUrls.slice(0, 3) } : {}),
+        ...(FMGO_VIDEO_MEDIA_MODELS.has(model) && videoUrls.length ? { reference_videos: videoUrls.slice(0, 3) } : {}),
+        ...(FMGO_VIDEO_MEDIA_MODELS.has(model) && audioUrls.length ? { reference_audios: audioUrls.slice(0, 3) } : {}),
     };
 }
 

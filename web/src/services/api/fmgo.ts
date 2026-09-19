@@ -21,6 +21,7 @@ export type FmgoPayload = {
 };
 
 export type FmgoTask = { id: string; statusUrl?: string; pollAfterMs?: number };
+const FMGO_IMAGE_GENERATION_TIMEOUT_MS = 30 * 60_000;
 
 export async function createFmgoTask(config: AiConfig, path: string, data: unknown, options?: { signal?: AbortSignal }, headers?: Record<string, string>) {
     const response = await axios.post<FmgoPayload>(fmgoUrl(config, path), data, { headers: { Authorization: `Bearer ${config.apiKey}`, ...headers }, signal: options?.signal });
@@ -31,13 +32,16 @@ export async function createFmgoTask(config: AiConfig, path: string, data: unkno
 }
 
 export async function waitForFmgoTask(config: AiConfig, task: FmgoTask, options?: { signal?: AbortSignal }) {
-    for (let attempt = 0; attempt < 240; attempt += 1) {
+    const deadline = Date.now() + FMGO_IMAGE_GENERATION_TIMEOUT_MS;
+    while (Date.now() < deadline) {
         const url = task.statusUrl || fmgoUrl(config, `/tasks/${encodeURIComponent(task.id)}`);
         const payload = (await axios.get<FmgoPayload>(url, { headers: { Authorization: `Bearer ${config.apiKey}` }, signal: options?.signal })).data;
         const status = payload.status || payload.task?.status;
         if (["completed", "succeeded", "success"].includes(status || "")) return payload;
         if (["failed", "cancelled", "canceled", "expired", "error"].includes(status || "")) throw new Error(readFmgoError(payload) || i18n.t("apiErrors.fmgoTaskFailed"));
-        await delay(payload.poll_after_ms || payload.task?.poll_after_ms || task.pollAfterMs || 2000, options?.signal);
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        await delay(Math.min(payload.poll_after_ms || payload.task?.poll_after_ms || task.pollAfterMs || 2000, remaining), options?.signal);
     }
     throw new Error(i18n.t("apiErrors.fmgoTaskTimeout"));
 }

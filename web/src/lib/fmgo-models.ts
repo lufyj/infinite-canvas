@@ -14,6 +14,7 @@ export type FmgoVideoSpec = {
     resolutions: readonly string[];
     defaultResolution: string;
     maxReferences: number;
+    appendResolution?: boolean;
     appendResolutionDuration?: boolean;
 };
 
@@ -26,26 +27,42 @@ export const FMGO_IMAGE_MODEL_SPECS: Record<string, FmgoImageSpec> = {
 export const FMGO_VIDEO_MODEL_SPECS: Record<string, FmgoVideoSpec> = {
     "grok-1.5": videoSpec("videos", [10, 15], ["16:9", "9:16", "1:1", "2:3", "3:2"], ["480p", "720p"], 1),
     "grok-1.5-fast": videoSpec("videos", [6, 10, 15], ["16:9", "9:16", "1:1", "2:3", "3:2"], ["480p", "720p"], 1),
+    "sora-2": videoSpec("chat", [4, 8, 12], ["16:9", "9:16"], [], 1),
     "sora-2-pro": videoSpec("chat", [4, 8, 12], ["16:9", "9:16"], [], 1),
     "veo-3.1": videoSpec("chat", [4, 6, 8], ["16:9", "9:16"], ["720p", "1080p"], 3),
+    "veo-3.1-fast": videoSpec("chat", [4, 6, 8], ["16:9", "9:16"], ["720p", "1080p"], 3),
     omni: videoSpec("videos", [8, 10], ["16:9", "9:16"], ["720p"], 4),
     "feimiao-v2": videoSpec("chat", [6, 8, 10, 12, 15], ["16:9", "9:16", "1:1", "2:3", "3:2"], ["480p", "720p"], 9, true),
     "feimiao-v2-fast": videoSpec("chat", [6, 8, 10, 12, 15], ["16:9", "9:16", "1:1", "2:3", "3:2"], ["480p", "720p"], 9, true),
+    "ss-v2": videoSpec("chat", [10, 15], ["16:9", "9:16", "1:1", "2:3", "3:2"], ["480p", "720p"], 9),
+    "ss-v2-fast": videoSpec("chat", [6, 8, 10, 12, 15], ["16:9", "9:16", "1:1", "2:3", "3:2"], ["480p", "720p"], 9),
+    "k2.0-fast": { ...videoSpec("videos", [10, 15], ["16:9", "9:16", "1:1"], ["720p"], 4), appendResolution: true },
+    "k2.5": videoSpec("videos", [10, 15, 30], ["16:9", "9:16", "1:1"], ["720p"], 4),
     "feimiao-v2-431": videoSpec("videos", [10, 15], ["16:9", "9:16", "1:1"], ["480p", "720p"], 4, true),
+    "feimiao-v2-933": videoSpec("videos", [15], ["16:9", "9:16"], ["480p", "720p"], 4),
     "feimiao-v2.5": { ...videoSpec("videos", [5, 10, 15, 30], ["16:9", "9:16", "1:1"], ["480p", "720p"], 4, true), durationsByResolution: { "480p": [5, 10, 15, 30], "720p": [10, 15, 30] } },
-    "feimiao-v2-mini": { ...videoSpec("videos", [5, 10], ["16:9", "9:16", "1:1"], ["480p", "720p"], 9, true), durationsByResolution: { "480p": [10], "720p": [5] } },
+    "feimiao-v2-mini": { ...videoSpec("videos", [10, 15], ["16:9", "9:16", "1:1"], ["480p", "720p"], 9, true), durationsByResolution: { "480p": [15], "720p": [10] } },
+    "feimiao-v2-903": videoSpec("videos", [15], ["16:9", "9:16"], ["480p", "720p"], 4),
+    "minimax-h3": { ...videoSpec("videos", [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], ["16:9", "9:16", "4:3", "3:4", "1:1"], ["768p", "2k"], 9), appendResolution: true },
+    "feimiao-v2-431-fast": videoSpec("videos", [10, 15], ["16:9", "9:16", "1:1"], ["480p", "720p"], 4, true),
+    "md2.0-933": { ...videoSpec("videos", [15], ["16:9", "9:16", "1:1"], ["480p", "720p"], 4), appendResolution: true },
+    "md2.0-900": { ...videoSpec("videos", [15], ["16:9", "9:16", "1:1"], ["720p"], 4), appendResolution: true },
+    "md2.5": videoSpec("videos", [30], ["16:9", "9:16", "1:1"], ["720p"], 4),
 };
 
 export const FMGO_MODEL_GROUPS = [
     { key: "gemini", models: ["gemini-3.1-flash-image", "gemini-3.0-pro-image"] },
     { key: "gptImage", models: ["gpt-image-2"] },
     { key: "grok", models: ["grok-1.5", "grok-1.5-fast"] },
-    { key: "sora", models: ["sora-2-pro"] },
-    { key: "veo", models: ["veo-3.1"] },
+    { key: "sora", models: ["sora-2", "sora-2-pro"] },
+    { key: "veo", models: ["veo-3.1", "veo-3.1-fast"] },
     { key: "omni", models: ["omni"] },
-    { key: "feimiaoV2", models: ["feimiao-v2", "feimiao-v2-fast", "feimiao-v2-mini"] },
-    { key: "feimiao431", models: ["feimiao-v2-431"] },
-    { key: "feimiao25", models: ["feimiao-v2.5"] },
+    { key: "minimax", models: ["minimax-h3"] },
+    { key: "md", models: ["md2.0-933", "md2.0-900", "md2.5"] },
+    { key: "feimiao20Card", models: ["feimiao-v2", "feimiao-v2-fast", "k2.0-fast"] },
+    { key: "feimiao20NoCard", models: ["feimiao-v2-431", "feimiao-v2-431-fast", "feimiao-v2-mini", "feimiao-v2-933", "feimiao-v2-903"] },
+    { key: "feimiao25", models: ["feimiao-v2.5", "k2.5"] },
+    { key: "ss", models: ["ss-v2", "ss-v2-fast"] },
 ] as const;
 
 export const FMGO_IMAGE_MODELS = Object.keys(FMGO_IMAGE_MODEL_SPECS);
@@ -68,7 +85,10 @@ export function fmgoLogicalModelName(model: string) {
     if (/^grok-video-1\.5-\d+s$/i.test(name)) return "grok-1.5";
     if (/^grok-video-\d+s$/i.test(name)) return "grok-1.5-fast";
     if (lowerName === "gemini-omni-flash") return "omni";
-    const dynamicVideoModel = Object.entries(FMGO_VIDEO_MODEL_SPECS).find(([base, spec]) => spec.appendResolutionDuration && lowerName.startsWith(`${base}-`) && /^(480p|720p)-\d+s$/i.test(lowerName.slice(base.length + 1)));
+    const dynamicVideoModel = Object.entries(FMGO_VIDEO_MODEL_SPECS).find(([base, spec]) => {
+        if (spec.appendResolution && spec.resolutions.some((resolution) => lowerName === `${base}-${resolution}`)) return true;
+        return spec.appendResolutionDuration && spec.resolutions.some((resolution) => lowerName.startsWith(`${base}-${resolution}-`) && /^\d+s$/i.test(lowerName.slice(`${base}-${resolution}-`.length)));
+    });
     return dynamicVideoModel?.[0] || name;
 }
 
@@ -133,7 +153,9 @@ function videoRequestModel(name: string, resolution: string, seconds: number) {
     if (name === "omni") return "gemini-omni-flash";
     if (name === "grok-1.5") return `grok-video-1.5-${seconds}s`;
     if (name === "grok-1.5-fast") return `grok-video-${seconds}s`;
-    return FMGO_VIDEO_MODEL_SPECS[name]?.appendResolutionDuration ? `${name}-${resolution}-${seconds}s` : name;
+    const spec = FMGO_VIDEO_MODEL_SPECS[name];
+    if (spec?.appendResolutionDuration) return `${name}-${resolution}-${seconds}s`;
+    return spec?.appendResolution ? `${name}-${resolution}` : name;
 }
 
 function readRatio(value: string) {
