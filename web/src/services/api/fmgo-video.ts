@@ -1,10 +1,11 @@
 import axios from "axios";
 
 import i18n from "@/i18n";
-import { fmgoVideoSelection } from "@/lib/fmgo-models";
-import { imageToDataUrl } from "@/services/image-storage";
+import { fmgoSupportsMediaReferences, fmgoVideoSelection } from "@/lib/fmgo-models";
+import { fmgoFileUrl } from "@/services/api/fmgo-files";
 import { availableRequestModels, buildApiUrl, modelOptionName, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
+import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import type { VideoGenerationResult, VideoGenerationTask, VideoGenerationTaskState } from "@/services/api/video";
 
 type FmgoVideoPayload = {
@@ -27,10 +28,9 @@ type FmgoVideoPayload = {
 export type FmgoVideoTask = VideoGenerationTask & { provider: "fmgo"; endpoint: "chat" | "videos"; statusUrl?: string; pollAfterMs?: number };
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 const FMGO_RICH_MEDIA_MODELS = new Set(["feimiao-v2-431", "feimiao-v2-431-fast", "feimiao-v2.5", "k2.0-fast", "k2.5", "feimiao-v2-933", "feimiao-v2-903", "md2.0-933", "md2.0-900", "md2.5"]);
-const FMGO_VIDEO_MEDIA_MODELS = new Set([...FMGO_RICH_MEDIA_MODELS, "minimax-h3"]);
-const FMGO_MEDIA_MODELS = new Set(["feimiao-v2", "feimiao-v2-fast", ...FMGO_VIDEO_MEDIA_MODELS]);
+const FMGO_VIDEO_MEDIA_MODELS = new Set([...FMGO_RICH_MEDIA_MODELS, "h3"]);
 
-export async function createFmgoVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: { signal?: AbortSignal; referenceVideos?: Array<{ url?: string; storageKey?: string }>; referenceAudios?: Array<{ url?: string; storageKey?: string }> }): Promise<FmgoVideoTask> {
+export async function createFmgoVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: { signal?: AbortSignal; referenceVideos?: ReferenceVideo[]; referenceAudios?: ReferenceAudio[] }): Promise<FmgoVideoTask> {
     if (!prompt.trim()) throw new Error(apiText("videoPromptRequired"));
     if (!config.baseUrl.trim()) throw new Error(apiText("baseUrlRequired"));
     if (!config.apiKey.trim()) throw new Error(apiText("apiKeyRequired"));
@@ -39,16 +39,19 @@ export async function createFmgoVideoTask(config: AiConfig, model: string, promp
     if (!profile) throw new Error(`FMGO 不支持视频模型 ${requestModel}`);
     const endpoint = profile.endpoint;
     const maxReferences = profile.maxReferences;
-    const images = await Promise.all(references.slice(0, maxReferences).map(fmgoImageReference));
-    if (profile.model === "grok-1.5" && !images.length) throw new Error("FMGO grok-1.5 仅支持首帧或单图参考生成");
-    const allowMediaDataUrl = FMGO_RICH_MEDIA_MODELS.has(profile.model);
-    const videoUrls = (options?.referenceVideos || []).map((media) => mediaUrl(media, allowMediaDataUrl)).filter((url): url is string => Boolean(url));
-    const audioUrls = (options?.referenceAudios || []).map((media) => mediaUrl(media, allowMediaDataUrl)).filter((url): url is string => Boolean(url));
-    if ((options?.referenceVideos || []).some((media) => !mediaUrl(media, allowMediaDataUrl))) throw new Error(apiText("invalidReferenceVideo"));
-    if ((options?.referenceAudios || []).some((media) => !mediaUrl(media, allowMediaDataUrl))) throw new Error(apiText("invalidReferenceAudio"));
-    if (FMGO_RICH_MEDIA_MODELS.has(profile.model) && audioUrls.length && !images.length && !videoUrls.length) throw new Error(apiText("invalidReferenceAudio"));
-    if (profile.endpoint === "chat" && images.length + videoUrls.length + audioUrls.length > maxReferences) throw new Error(`FMGO ${profile.model} supports at most ${maxReferences} references`);
-    if ((videoUrls.length || audioUrls.length) && !FMGO_MEDIA_MODELS.has(profile.model)) throw new Error(`FMGO ${profile.model} does not support video or audio references`);
+    const imageReferences = references.slice(0, maxReferences);
+    const videoReferences = (options?.referenceVideos || []).slice(0, 3);
+    const audioReferences = (options?.referenceAudios || []).slice(0, 3);
+    if (profile.model === "grok-1.5" && !imageReferences.length) throw new Error("FMGO grok-1.5 仅支持首帧或单图参考生成");
+    if ((videoReferences.length || audioReferences.length) && !fmgoSupportsMediaReferences(profile.model)) throw new Error(`FMGO ${profile.model} does not support video or audio references`);
+    if (FMGO_RICH_MEDIA_MODELS.has(profile.model) && audioReferences.length && !imageReferences.length && !videoReferences.length) throw new Error(apiText("invalidReferenceAudio"));
+    if (profile.endpoint === "chat" && imageReferences.length + videoReferences.length + audioReferences.length > maxReferences) throw new Error(`FMGO ${profile.model} supports at most ${maxReferences} references`);
+    if (profile.maxTotalReferences && imageReferences.length + videoReferences.length + audioReferences.length > profile.maxTotalReferences) throw new Error(`FMGO ${profile.model} supports at most ${profile.maxTotalReferences} references`);
+    const [images, videoUrls, audioUrls] = await Promise.all([
+        Promise.all(imageReferences.map((image) => fmgoFileUrl(config, image, "image", options))),
+        Promise.all(videoReferences.map((video) => fmgoFileUrl(config, video, "video", options))),
+        Promise.all(audioReferences.map((audio) => fmgoFileUrl(config, audio, "audio", options))),
+    ]);
     const { resolution, seconds, ratio } = profile;
     const headers = { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json", Accept: "application/json", ...(endpoint === "chat" ? { Prefer: "respond-async" } : {}) };
     const body = endpoint === "chat"
@@ -85,16 +88,6 @@ export async function pollFmgoVideoTask(config: AiConfig, task: FmgoVideoTask, o
     } catch (error) {
         if (axios.isCancel(error) || options?.signal?.aborted) throw error;
         throw new Error(readError(error) || apiText("videoTaskQueryFailed"));
-    }
-}
-
-async function fmgoImageReference(image: ReferenceImage) {
-    const publicUrl = [image.url, image.dataUrl].find((value) => /^https?:\/\//i.test(value || ""));
-    if (publicUrl) return publicUrl;
-    try {
-        return await imageToDataUrl(image);
-    } catch (error) {
-        throw new Error(apiText("referenceImageReadFailed"), { cause: error });
     }
 }
 
@@ -137,11 +130,6 @@ function collectUrl(value: unknown): string | undefined {
     if (Array.isArray(value)) return value.map(collectUrl).find(Boolean);
     if (value && typeof value === "object") return Object.entries(value as Record<string, unknown>).filter(([key]) => !["status_url", "statusUrl", "poll_after_ms", "task", "id"].includes(key)).map(([, item]) => collectUrl(item)).find(Boolean);
     return undefined;
-}
-
-function mediaUrl(value: { url?: string; storageKey?: string }, allowDataUrl = false) {
-    const url = value.url || value.storageKey || "";
-    return /^(?:https?:\/\/|data:(?:video|audio)\/)/i.test(url) && (allowDataUrl || !url.startsWith("data:")) ? url : "";
 }
 
 async function videoResultFromUrl(url: string, options?: { signal?: AbortSignal }): Promise<VideoGenerationResult> {

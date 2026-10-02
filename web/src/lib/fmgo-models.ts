@@ -14,6 +14,7 @@ export type FmgoVideoSpec = {
     resolutions: readonly string[];
     defaultResolution: string;
     maxReferences: number;
+    maxTotalReferences?: number;
     appendResolution?: boolean;
     appendResolutionDuration?: boolean;
 };
@@ -43,7 +44,7 @@ export const FMGO_VIDEO_MODEL_SPECS: Record<string, FmgoVideoSpec> = {
     "feimiao-v2.5": { ...videoSpec("videos", [5, 10, 15, 30], ["16:9", "9:16", "1:1"], ["480p", "720p"], 4, true), durationsByResolution: { "480p": [5, 10, 15, 30], "720p": [10, 15, 30] } },
     "feimiao-v2-mini": { ...videoSpec("videos", [10, 15], ["16:9", "9:16", "1:1"], ["480p", "720p"], 9, true), durationsByResolution: { "480p": [15], "720p": [10] } },
     "feimiao-v2-903": videoSpec("videos", [15], ["16:9", "9:16"], ["480p", "720p"], 4),
-    "minimax-h3": { ...videoSpec("videos", [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], ["16:9", "9:16", "4:3", "3:4", "1:1"], ["768p", "2k"], 9), appendResolution: true },
+    h3: { ...videoSpec("videos", [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], ["16:9", "9:16", "4:3", "3:4", "1:1"], ["768p", "2k"], 9), appendResolution: true, maxTotalReferences: 12 },
     "feimiao-v2-431-fast": videoSpec("videos", [10, 15], ["16:9", "9:16", "1:1"], ["480p", "720p"], 4, true),
     "md2.0-933": { ...videoSpec("videos", [15], ["16:9", "9:16", "1:1"], ["480p", "720p"], 4), appendResolution: true },
     "md2.0-900": { ...videoSpec("videos", [15], ["16:9", "9:16", "1:1"], ["720p"], 4), appendResolution: true },
@@ -57,7 +58,7 @@ export const FMGO_MODEL_GROUPS = [
     { key: "sora", models: ["sora-2", "sora-2-pro"] },
     { key: "veo", models: ["veo-3.1", "veo-3.1-fast"] },
     { key: "omni", models: ["omni"] },
-    { key: "minimax", models: ["minimax-h3"] },
+    { key: "minimax", models: ["h3"] },
     { key: "md", models: ["md2.0-933", "md2.0-900", "md2.5"] },
     { key: "feimiao20Card", models: ["feimiao-v2", "feimiao-v2-fast", "k2.0-fast"] },
     { key: "feimiao20NoCard", models: ["feimiao-v2-431", "feimiao-v2-431-fast", "feimiao-v2-mini", "feimiao-v2-933", "feimiao-v2-903"] },
@@ -68,6 +69,12 @@ export const FMGO_MODEL_GROUPS = [
 export const FMGO_IMAGE_MODELS = Object.keys(FMGO_IMAGE_MODEL_SPECS);
 export const FMGO_VIDEO_MODELS = Object.keys(FMGO_VIDEO_MODEL_SPECS);
 export const FMGO_PLUGIN_MODELS = [...FMGO_IMAGE_MODELS, ...FMGO_VIDEO_MODELS];
+const FMGO_MEDIA_REFERENCE_MODELS = new Set(["feimiao-v2", "feimiao-v2-fast", "feimiao-v2-431", "feimiao-v2-431-fast", "feimiao-v2.5", "k2.0-fast", "k2.5", "feimiao-v2-933", "feimiao-v2-903", "md2.0-933", "md2.0-900", "md2.5", "h3"]);
+
+export function fmgoSupportsMediaReferences(model: string) {
+    const name = model.split("::").at(-1) || model;
+    return FMGO_MEDIA_REFERENCE_MODELS.has(fmgoLogicalModelName(name).toLowerCase());
+}
 
 export function fmgoModelCapability(model: string) {
     const name = model.split("::").at(-1)?.toLowerCase() || "";
@@ -109,7 +116,7 @@ export function fmgoVideoSelection(model: string, resolutionValue = "", duration
     const spec = FMGO_VIDEO_MODEL_SPECS[name];
     if (!spec) return null;
     const available = availableRequestModels ? new Set(availableRequestModels.map((item) => item.toLowerCase())) : null;
-    const allows = (resolution: string, seconds: number) => !available || available.has(videoRequestModel(name, resolution, seconds));
+    const allows = (resolution: string, seconds: number) => !available || available.has(videoRequestModel(name, resolution, seconds).toLowerCase());
     const resolutions = spec.resolutions.filter((resolution) => (spec.durationsByResolution?.[resolution] || spec.durations).some((seconds) => allows(resolution, seconds)));
     if (spec.resolutions.length && !resolutions.length) return null;
     const requestedResolution = resolutionValue.trim().toLowerCase().replace(/^(480|720|1080)$/, "$1p");
@@ -153,6 +160,7 @@ function videoRequestModel(name: string, resolution: string, seconds: number) {
     if (name === "omni") return "gemini-omni-flash";
     if (name === "grok-1.5") return `grok-video-1.5-${seconds}s`;
     if (name === "grok-1.5-fast") return `grok-video-${seconds}s`;
+    if (name === "h3") return resolution === "2k" ? "H3-2K" : "H3-768p";
     const spec = FMGO_VIDEO_MODEL_SPECS[name];
     if (spec?.appendResolutionDuration) return `${name}-${resolution}-${seconds}s`;
     return spec?.appendResolution ? `${name}-${resolution}` : name;
