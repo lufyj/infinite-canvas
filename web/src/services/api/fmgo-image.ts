@@ -24,13 +24,13 @@ async function createGptTask(config: AiConfig, profile: NonNullable<ReturnType<t
     const requestPrompt = prompt.trim().startsWith(`比例${ratio}`) ? prompt : `比例${ratio}, ${prompt}`;
     const imageSize = profile.imageSize.toLowerCase();
     if (!references.length) {
-        return createFmgoTask(config, "/images/generations", { model: profile.requestModel, prompt: requestPrompt, aspect_ratio: ratio, ...(profile.requestModel === "gpt-image-2" ? {} : { image_size: imageSize }) }, options, { "Content-Type": "application/json", Accept: "application/json", Prefer: "respond-async", "X-Flow-Async": "1" });
+        return createFmgoTask(config, "/images/generations", { model: profile.requestModel, prompt: requestPrompt, aspect_ratio: ratio, ...(imageSize === "1k" ? {} : { image_size: imageSize }) }, options, { "Content-Type": "application/json", Accept: "application/json", Prefer: "respond-async", "X-Flow-Async": "1" });
     }
     const body = new FormData();
     body.set("model", profile.requestModel);
     body.set("prompt", requestPrompt);
     body.set("aspect_ratio", ratio);
-    if (profile.requestModel !== "gpt-image-2") body.set("image_size", imageSize);
+    if (imageSize !== "1k") body.set("image_size", imageSize);
     const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
     files.forEach((file) => body.append("image", file));
     return createFmgoTask(config, "/images/edits", body, options, { Accept: "application/json", Prefer: "respond-async", "X-Flow-Async": "1" });

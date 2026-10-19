@@ -17,6 +17,7 @@ type FmgoVideoPayload = {
     progress?: number;
     task?: { id?: string; status?: string; status_url?: string; poll_after_ms?: number };
     result?: unknown;
+    output?: unknown;
     result_url?: string;
     url?: string;
     video_url?: string;
@@ -28,7 +29,7 @@ type FmgoVideoPayload = {
 export type FmgoVideoTask = VideoGenerationTask & { provider: "fmgo"; endpoint: "chat" | "videos"; statusUrl?: string; pollAfterMs?: number };
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 const FMGO_RICH_MEDIA_MODELS = new Set(["feimiao-v2-431", "feimiao-v2-431-fast", "feimiao-v2.5", "k2.0-fast", "k2.5", "feimiao-v2-933", "feimiao-v2-903", "md2.0-933", "md2.0-900", "md2.5"]);
-const FMGO_VIDEO_MEDIA_MODELS = new Set([...FMGO_RICH_MEDIA_MODELS, "h3"]);
+const FMGO_VIDEO_MEDIA_MODELS = new Set([...FMGO_RICH_MEDIA_MODELS, "h3", "minimax-h3"]);
 
 export async function createFmgoVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: { signal?: AbortSignal; referenceVideos?: ReferenceVideo[]; referenceAudios?: ReferenceAudio[] }): Promise<FmgoVideoTask> {
     if (!prompt.trim()) throw new Error(apiText("videoPromptRequired"));
@@ -117,7 +118,7 @@ function videoBody(model: string, requestModel: string, prompt: string, ratio: s
 }
 
 function findVideoUrl(payload: FmgoVideoPayload): string | undefined {
-    const candidates = [payload.result_url, payload.video_url, payload.url, payload.result];
+    const candidates = [payload.result_url, payload.video_url, payload.url, payload.output, payload.result];
     for (const candidate of candidates) {
         const url = collectUrl(candidate);
         if (url) return url;

@@ -3,7 +3,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 import i18n from "@/i18n";
-import { fmgoLogicalModelName, fmgoModelCapability, fmgoRequestModelIds } from "@/lib/fmgo-models";
+import { FMGO_VIDEO_MODEL_SPECS, fmgoLogicalModelName, fmgoModelCapability, fmgoRequestModelIds } from "@/lib/fmgo-models";
 
 export type ApiCallFormat = "openai" | "gemini" | "fmgo";
 export type ModelCapability = "image" | "video" | "text" | "audio";
@@ -424,7 +424,7 @@ function mergeFetchedModelCatalog(previousModels: ChannelModel[], fetchedModels:
         const fixedCapability = fmgoModelCapability(name);
         const capability = fixedCapability || (previous?.capability === "audio" || previous?.capability === "text" ? previous.capability : guessCapability(name));
         if (!fixedCapability && (capability === "image" || capability === "video")) return [];
-        const hasOnlyLogicalName = fixedCapability && requestModels.every((requestModel) => requestModel.toLowerCase() === name.toLowerCase());
+        const hasOnlyLogicalName = fixedCapability && !FMGO_VIDEO_MODEL_SPECS[name]?.requestModelsByResolution && requestModels.every((requestModel) => requestModel.toLowerCase() === name.toLowerCase());
         const availableRequests = hasOnlyLogicalName ? fmgoRequestModelIds(name) : requestModels;
         return [{ name, capability, script: previous?.script, available: true, requestModels: availableRequests }];
     });
