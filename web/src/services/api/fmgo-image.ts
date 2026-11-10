@@ -64,7 +64,7 @@ function findImageUrls(payload: FmgoPayload) {
 
 function collect(value: unknown, urls: Set<string>, rawBase64 = false) {
     if (typeof value === "string") {
-        value.match(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+|https?:\/\/[^\s"'<>]+/g)?.forEach((url) => urls.add(url));
+        value.match(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+|https?:\/\/[^\s"'<>)]+/g)?.forEach((url) => urls.add(url));
         if (rawBase64 && /^[A-Za-z0-9+/=\s]{128,}$/.test(value)) urls.add(`data:image/png;base64,${value.replace(/\s/g, "")}`);
     } else if (Array.isArray(value)) value.forEach((item) => collect(item, urls, rawBase64));
     else if (value && typeof value === "object") {
